@@ -1,0 +1,80 @@
+---
+title: "Figure 6"
+output: html_notebook
+---
+
+Download libraries.
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(ComplexHeatmap)
+```
+
+Download RData from the folder.
+```{r}
+# Load RData file containing data required for analysis and visualization.
+load("multiple_cohorts_data.RData")
+
+source("FunctionCollection.R")
+
+# Define a list of datasets (unique study ID)
+datasets <- c("PHS000452_GSE91061","PRJEB23709","SU2CMARK")
+
+# The clinical and gene expression data is stored as df_tf.
+df_tf <- df_tf %>%
+  distinct(SampleID, StudyID, .keep_all = TRUE)
+
+df_C1_pre <- df_tf %>% 
+  subset(StudyID == datasets[1] & BiopsyTime == "Pre") %>%
+  dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_C2_pre <- df_tf %>%
+  subset(StudyID == datasets[2] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_NSCLC_pre <- df_tf %>%
+  subset(StudyID == datasets[3] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+# Combine all pre-tx samples from three cohorts
+df_pre <- rbind(df_C1_pre, df_C2_pre, df_NSCLC_pre)
+
+# Define list of immune cell type
+cell_types <- c("B.cells.naive","B.cells.memory","Plasma.cells",
+                "T.cells.CD8","T.cells.CD4.naive","T.cells.CD4.memory.resting","T.cells.CD4.memory.activated",
+                "T.cells.follicular.helper","T.cells.regulatory..Tregs.","T.cells.gamma.delta",
+                "NK.cells.resting","NK.cells.activated",
+                "Monocytes","Macrophages.M0","Macrophages.M1","Macrophages.M2",
+                "Dendritic.cells.resting","Dendritic.cells.activated",
+                "Mast.cells.resting","Mast.cells.activated",
+                "Eosinophils","Neutrophils"
+                )
+```
+
+
+
+```{r}
+# ---- 
+# Define list of genes for correlating with survival
+gene_ISG_list <- c("CCR5","CIITA","CXCL9","HLA.DRA","HLA.E",
+                   "IDO1","IFNG","IRF9","JAK2","SOCS1",
+                   "STAT1","TBX21")
+
+df_in <- df_pre %>%
+  subset(StudyID %in% datasets & BiopsyTime == "Pre")
+
+# Compute survival stats using compute_survival_heatmap_data function
+Fig6_data <- compute_survival_heatmap_data(df = df_in,
+                              genes = gene_ISG_list, 
+                              cohort_col = "StudyID", 
+                              cohorts = datasets, 
+                              split_pct = 50, 
+                              norm_type = "log2")
+
+# Draw a heatmap
+Fig6 <- plot_survival_heatmap_data(Fig6_data, orientation = "portrait")
+
+Fig6
+```
+
+

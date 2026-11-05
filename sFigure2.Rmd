@@ -1,0 +1,158 @@
+---
+title: "sFig2 "
+output: html_notebook
+---
+
+Download libraries.
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(ComplexHeatmap)
+```
+
+Download RData from the folder.
+```{r}
+# Load RData file containing data required for analysis and visualization.
+load("multiple_cohorts_data.RData")
+
+source("FunctionCollection.R")
+
+# Define a list of datasets (unique study ID)
+datasets <- c("PHS000452_GSE91061","PRJEB23709","SU2CMARK")
+
+# The clinical and gene expression data is stored as df_tf.
+df_tf <- df_tf %>%
+  distinct(SampleID, StudyID, .keep_all = TRUE)
+
+df_C1_pre <- df_tf %>% 
+  subset(StudyID == datasets[1] & BiopsyTime == "Pre") %>%
+  dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_C2_pre <- df_tf %>%
+  subset(StudyID == datasets[2] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_NSCLC_pre <- df_tf %>%
+  subset(StudyID == datasets[3] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+# Combine all pre-tx samples from three cohorts
+df_pre <- rbind(df_C1_pre, df_C2_pre, df_NSCLC_pre)
+
+```
+
+
+Cohort 1 Pre-Tx 50% IRF2/50% IRF1 - Plot survival curves.
+```{r}
+df_C1 <- df_pre %>%
+  subset(StudyID == datasets[1] & BiopsyTime == "Pre")
+
+FigS2_C1_IRF2_P50 <- plot_km_nested_subset(df = df_C1,
+                                           geneA = "IRF2",
+                                           geneB = "IRF1", 
+                                           splitA = 50,
+                                           splitB = 50,
+                                           subsetA = "High", 
+                                           max_years = 5, 
+                                           show_metrics = "none", 
+                                           landmark_years = 1)
+
+FigS2_C1_IRF2_P50
+```
+
+Cohort 1 Pre-Tx 35% IRF2/50% IRF1 - Plot survival curves.
+```{r}
+FigS2_C1_IRF2_P35 <- plot_km_nested_subset(df = df_C1,
+                                           geneA = "IRF2",
+                                           geneB = "IRF1", 
+                                           splitA = 35,
+                                           splitB = 50,
+                                           subsetA = "High", 
+                                           max_years = 5, 
+                                           show_metrics = "none", 
+                                           landmark_years = 1)
+
+FigS2_C1_IRF2_P35
+```
+
+Cohort 1 Pre-Tx 15% IRF2/50% IRF1 - Plot survival curves.
+```{r}
+FigS2_C1_IRF2_P15 <- plot_km_nested_subset(df = df_C1,
+                                           geneA = "IRF2",
+                                           geneB = "IRF1", 
+                                           splitA = 15,
+                                           splitB = 50,
+                                           subsetA = "High", 
+                                           max_years = 5, 
+                                           show_metrics = "none", 
+                                           landmark_years = 1)
+
+FigS2_C1_IRF2_P15
+
+```
+
+Cohort 2 Pre-Tx 50% IRF2/50% IRF1 - Plot survival curves.
+```{r}
+df_C2 <- df_pre %>%
+  subset(StudyID == datasets[2] & BiopsyTime == "Pre")
+
+FigS2_C2_IRF2_P50 <- plot_km_nested_subset(df = df_C2,
+                                           geneA = "IRF2",
+                                           geneB = "IRF1", 
+                                           splitA = 50,
+                                           splitB = 50,
+                                           subsetA = "High", 
+                                           max_years = 5, 
+                                           show_metrics = "none", 
+                                           landmark_years = 1)
+
+FigS2_C2_IRF2_P50
+```
+
+Cohort NSCLC Pre-Tx 50% IRF2/50% IRF1 - Plot survival curves.
+```{r}
+df_NSCLC_N124 <- df_pre %>%
+  subset(StudyID == datasets[3] & BiopsyTime == "Pre")
+  
+FigS2_NSCLC_IRF2_P50 <- plot_km_nested_subset(df = df_NSCLC_N124,
+                                           geneA = "IRF2",
+                                           geneB = "IRF1", 
+                                           splitA = 50,
+                                           splitB = 50,
+                                           subsetA = "High", 
+                                           max_years = 5, 
+                                           show_metrics = "none", 
+                                           landmark_years = 1)
+
+FigS2_NSCLC_IRF2_P50
+
+```
+
+Cohort 1 & 2 & NSCLC Pre-Tx - Plot IRF2 expression level as bar graph.
+```{r}
+FigS2_IRF1 <- plot_gene_expr_barplot(df = df_pre,
+                       genes = "IRF1",
+                       norm_type = "log2", 
+                       group_col = "StudyID", 
+                       selected_cohorts = c("PHS000452_GSE91061","PRJEB23709","SU2CMARK"))
+
+FigS2_IRF1
+```
+
+
+
+```{r}
+FigS2 <- ggarrange(FigS2_C1_IRF2_P50$plot,
+                   FigS2_C1_IRF2_P35$plot,
+                   FigS2_C1_IRF2_P15$plot,
+                   FigS2_C2_IRF2_P50$plot,
+                   FigS2_NSCLC_IRF2_P50$plot,
+                   FigS2_IRF1,
+          nrow = 2, ncol = 3)
+
+FigS2
+```
+
+
+
+

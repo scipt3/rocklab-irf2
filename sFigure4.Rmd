@@ -1,0 +1,194 @@
+---
+title: "sFig4"
+output: html_notebook
+---
+
+Download libraries.
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(ComplexHeatmap)
+```
+
+Download RData from the folder.
+```{r}
+# Load RData file containing data required for analysis and visualization.
+load("multiple_cohorts_data.RData")
+
+source("FunctionCollection.R")
+
+# Define a list of datasets (unique study ID)
+datasets <- c("PHS000452_GSE91061","PRJEB23709","SU2CMARK")
+
+# The clinical and gene expression data is stored as df_tf.
+df_tf <- df_tf %>%
+  distinct(SampleID, StudyID, .keep_all = TRUE)
+
+df_C1_pre <- df_tf %>% 
+  subset(StudyID == datasets[1] & BiopsyTime == "Pre") %>%
+  dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_C2_pre <- df_tf %>%
+  subset(StudyID == datasets[2] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_NSCLC_pre <- df_tf %>%
+  subset(StudyID == datasets[3] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+# Combine all pre-tx samples from three cohorts
+df_pre <- rbind(df_C1_pre, df_C2_pre, df_NSCLC_pre)
+```
+
+
+```{r}
+# Define list of immune cell type
+cell_types <- c("B.cells.naive","B.cells.memory","Plasma.cells",
+                "T.cells.CD8","T.cells.CD4.naive","T.cells.CD4.memory.resting","T.cells.CD4.memory.activated",
+                "T.cells.follicular.helper","T.cells.regulatory..Tregs.","T.cells.gamma.delta",
+                "NK.cells.resting","NK.cells.activated",
+                "Monocytes","Macrophages.M0","Macrophages.M1","Macrophages.M2",
+                "Dendritic.cells.resting","Dendritic.cells.activated",
+                "Mast.cells.resting","Mast.cells.activated",
+                "Eosinophils","Neutrophils"
+                )
+```
+
+
+Cohort 1 Pre-Tx Top 50% IRF2/50% CD8 T cell - Plot survival curves.
+```{r}
+df_in <- df_pre %>%
+  subset(StudyID == datasets[1] & BiopsyTime == "Pre")
+
+FigS4_C1_IRF2_High_CD8_P50 <- plot_km_nested_subset(df = df_in,
+                                           geneA = "IRF2",
+                                           geneB = "T.cells.CD8",
+                                           splitA = 50, 
+                                           splitB = 50, 
+                                           subsetA = "High",
+                                           subgroup_col = NULL, 
+                                           norm_type = "log2", 
+                                           cell_types = cell_types, 
+                                           max_years = 5, 
+                                           show_metrics = "both", 
+                                           landmark_years = 1)
+
+FigS4_C1_IRF2_High_CD8_P50$plot
+```
+
+Cohort 1 Pre-Tx Bottom 50% IRF2/50% CD8 T cell - Plot survival curves.
+```{r}
+df_in <- df_pre %>%
+  subset(StudyID == datasets[1] & BiopsyTime == "Pre")
+
+FigS4_C1_IRF2_Low_CD8_P50 <- plot_km_nested_subset(df = df_in,
+                                           geneA = "IRF2",
+                                           geneB = "T.cells.CD8",
+                                           splitA = 50, 
+                                           splitB = 50, 
+                                           subsetA = "Low",
+                                           subgroup_col = NULL, 
+                                           norm_type = "log2", 
+                                           cell_types = cell_types, 
+                                           max_years = 5, 
+                                           show_metrics = "both", 
+                                           landmark_years = 1)
+
+FigS4_C1_IRF2_Low_CD8_P50$plot
+```
+
+Cohort 2 Pre-Tx Top 50% IRF2/50% CD8 T cell - Plot survival curves.
+```{r}
+df_in <- df_pre %>%
+  subset(StudyID == datasets[2] & BiopsyTime == "Pre")
+
+FigS4_C2_IRF2_High_CD8_P50 <- plot_km_nested_subset(df = df_in,
+                                           geneA = "IRF2",
+                                           geneB = "T.cells.CD8",
+                                           splitA = 50, 
+                                           splitB = 50, 
+                                           subsetA = "High",
+                                           subgroup_col = NULL, 
+                                           norm_type = "log2", 
+                                           cell_types = cell_types, 
+                                           max_years = 5, 
+                                           show_metrics = "both", 
+                                           landmark_years = 1)
+
+FigS4_C2_IRF2_High_CD8_P50$plot
+```
+
+Cohort 2 Pre-Tx Bottom 50% IRF2/50% CD8 T cell - Plot survival curves.
+```{r}
+df_in <- df_pre %>%
+  subset(StudyID == datasets[2] & BiopsyTime == "Pre")
+
+FigS4_C2_IRF2_Low_CD8_P50 <- plot_km_nested_subset(df = df_in,
+                                           geneA = "IRF2",
+                                           geneB = "T.cells.CD8",
+                                           splitA = 50, 
+                                           splitB = 50, 
+                                           subsetA = "Low",
+                                           subgroup_col = NULL, 
+                                           norm_type = "log2", 
+                                           cell_types = cell_types, 
+                                           max_years = 5, 
+                                           show_metrics = "both", 
+                                           landmark_years = 1)
+
+FigS4_C2_IRF2_Low_CD8_P50$plot
+```
+
+Cohort NSCLC Pre-Tx Top 50% IRF2/50% CD8 T cell - Plot survival curves.
+```{r}
+df_in <- df_pre %>%
+  subset(StudyID == datasets[3] & BiopsyTime == "Pre")
+
+FigS4_NSCLC_IRF2_High_CD8_P50 <- plot_km_nested_subset(df = df_in,
+                                           geneA = "IRF2",
+                                           geneB = "T.cells.CD8",
+                                           splitA = 50, 
+                                           splitB = 50, 
+                                           subsetA = "High",
+                                           subgroup_col = NULL, 
+                                           norm_type = "log2", 
+                                           cell_types = cell_types, 
+                                           max_years = 5, 
+                                           show_metrics = "both", 
+                                           landmark_years = 1)
+
+FigS4_NSCLC_IRF2_High_CD8_P50$plot
+```
+
+Cohort NSCLC Pre-Tx Bottom 50% IRF2/50% CD8 T cell - Plot survival curves.
+```{r}
+df_in <- df_pre %>%
+  subset(StudyID == datasets[3] & BiopsyTime == "Pre")
+
+FigS4_NSCLC_IRF2_Low_CD8_P50 <- plot_km_nested_subset(df = df_in,
+                                           geneA = "IRF2",
+                                           geneB = "T.cells.CD8",
+                                           splitA = 50, 
+                                           splitB = 50, 
+                                           subsetA = "Low",
+                                           subgroup_col = NULL, 
+                                           norm_type = "log2", 
+                                           cell_types = cell_types, 
+                                           max_years = 5, 
+                                           show_metrics = "both", 
+                                           landmark_years = 1)
+
+FigS4_NSCLC_IRF2_Low_CD8_P50$plot
+```
+
+```{r}
+FigS4 <- ggarrange(FigS4_C1_IRF2_High_CD8_P50$plot,
+                   FigS4_C1_IRF2_Low_CD8_P50$plot,
+                   FigS4_C2_IRF2_High_CD8_P50$plot,
+                   FigS4_C2_IRF2_Low_CD8_P50$plot,
+                   FigS4_NSCLC_IRF2_High_CD8_P50$plot,
+                   FigS4_NSCLC_IRF2_Low_CD8_P50$plot,
+                   nrow = 3, ncol = 2)
+
+FigS4
+```

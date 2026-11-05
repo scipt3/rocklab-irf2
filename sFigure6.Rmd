@@ -1,0 +1,167 @@
+---
+title: "sFig6"
+output: html_notebook
+---
+
+Download libraries.
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(ComplexHeatmap)
+```
+
+Download RData from the folder.
+```{r}
+# Load RData file containing data required for analysis and visualization.
+load("IRF2_Project_FigureS1.RData")
+
+source("FunctionCollection.R")
+
+# Define a list of datasets (unique study ID)
+datasets <- c("PHS000452_GSE91061","PRJEB23709","SU2CMARK")
+
+# The clinical and gene expression data is stored as df_tf.
+df_tf <- df_tf %>%
+  distinct(SampleID, StudyID, .keep_all = TRUE)
+
+df_C1_pre <- df_tf %>% 
+  subset(StudyID == datasets[1] & BiopsyTime == "Pre") %>%
+  dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_C2_pre <- df_tf %>%
+  subset(StudyID == datasets[2] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_NSCLC_pre <- df_tf %>%
+  subset(StudyID == datasets[3] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+# Combine all pre-tx samples from three cohorts
+df_pre <- rbind(df_C1_pre, df_C2_pre, df_NSCLC_pre)
+
+# Define list of immune cell type
+cell_types <- c("B.cells.naive","B.cells.memory","Plasma.cells",
+                "T.cells.CD8","T.cells.CD4.naive","T.cells.CD4.memory.resting","T.cells.CD4.memory.activated",
+                "T.cells.follicular.helper","T.cells.regulatory..Tregs.","T.cells.gamma.delta",
+                "NK.cells.resting","NK.cells.activated",
+                "Monocytes","Macrophages.M0","Macrophages.M1","Macrophages.M2",
+                "Dendritic.cells.resting","Dendritic.cells.activated",
+                "Mast.cells.resting","Mast.cells.activated",
+                "Eosinophils","Neutrophils"
+                )
+```
+
+
+Combine TCGA lung cancer groups LUAD and LUSC into NSCLC.
+```{r}
+# Transpose TCGA gene expression matrix
+# Gene from rows to columns
+# Sample from columns to rows
+df_tcga <- combined_expr_matrix_tpm_lung_skcm %>%
+  tibble::column_to_rownames(., var = "Symbol") %>%
+  t() %>% 
+  as.data.frame() %>%
+  tibble::rownames_to_column(., var = "SampleID")
+
+# Add StudyID columns
+StudyID <- combined_meta_lung_skcm$title[match(df_tcga$SampleID, combined_meta_lung_skcm$barcode)]
+
+df_tcga <- tibble::add_column(df_tcga, .after = 1, StudyID)
+
+df_tcga <- df_tcga %>%
+  mutate(StudyID = ifelse(StudyID %in% c("LUAD","LUSC"), "NSCLC",StudyID))
+
+# Draw gene-gene scatter plot
+FigS6_TCGA_IRF2_IFNG <- plot_gene_gene_scatter(df = df_tcga,
+                                             geneA = "IFNG",
+                                             geneB = "IRF2",
+                                             cohort_col = "StudyID",
+                                             cohorts = c("NSCLC","SKCM"),
+                                             norm_type = "log2",
+                                             free_scales = FALSE) 
+
+FigS6_TCGA_IRF2_IFNG
+```
+
+```{r}
+# Draw gene-gene scatter plot
+FigS6_TCGA_CXCL9_IFNG <- plot_gene_gene_scatter(df = df_tcga,
+                                             geneA = "IFNG",
+                                             geneB = "CXCL9",
+                                             cohort_col = "StudyID",
+                                             cohorts = c("NSCLC","SKCM"),
+                                             norm_type = "log2",
+                                             free_scales = FALSE) 
+
+FigS6_TCGA_CXCL9_IFNG
+```
+
+
+```{r}
+FigS6_comb <- ggarrange(FigS6_TCGA_IRF2_IFNG,
+                   FigS6_TCGA_CXCL9_IFNG,
+                   nrow = 2, ncol = 1, align = "hv")
+
+FigS6_comb
+```
+
+Export Figure.
+```{r}
+setwd("/Users/patipark/Library/CloudStorage/Dropbox/UMass_Chan/IRF2_Project/IRF2_Manuscript_Figures_v6")
+
+pdf("FigureS6_comb.pdf", 
+    width = 8, 
+    height = 7,
+    paper = "a4r")
+
+FigS6_comb
+
+dev.off()
+```
+
+Separate TCGA lung cancer groups - LUAD and LUSC
+```{r}
+# Transpose TCGA gene expression matrix
+# Gene from rows to columns
+# Sample from columns to rows
+df_tcga_indv <- df_tcga %>%
+  dplyr::select(-StudyID)
+
+# Add StudyID columns
+StudyID <- combined_meta_lung_skcm$title[match(df_tcga_indv$SampleID, combined_meta_lung_skcm$barcode)]
+
+df_tcga_indv <- tibble::add_column(df_tcga_indv, .after = 1, StudyID)
+
+
+# Draw gene-gene scatter plot
+FigS6_INDV_IRF2_IFNG <- plot_gene_gene_scatter(df = df_tcga_indv,
+                                             geneA = "IFNG",
+                                             geneB = "IRF2",
+                                             cohort_col = "StudyID",
+                                             cohorts = c("LUAD","LUSC","SKCM"),
+                                             norm_type = "log2",
+                                             free_scales = FALSE) 
+
+FigS6_INDV_IRF2_IFNG
+```
+
+```{r}
+# Draw gene-gene scatter plot
+FigS6_INDV_CXCL9_IFNG <- plot_gene_gene_scatter(df = df_tcga_indv,
+                                             geneA = "IFNG",
+                                             geneB = "CXCL9",
+                                             cohort_col = "StudyID",
+                                             cohorts = c("LUAD","LUSC","SKCM"),
+                                             norm_type = "log2",
+                                             free_scales = FALSE) 
+
+FigS6_INDV_CXCL9_IFNG
+```
+
+```{r}
+FigS6_indv <- ggarrange(FigS6_INDV_IRF2_IFNG,
+                   FigS6_INDV_CXCL9_IFNG,
+                   nrow = 2, ncol = 1, align = "hv")
+
+FigS6_indv
+```

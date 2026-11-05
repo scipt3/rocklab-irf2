@@ -1,0 +1,895 @@
+---
+title: "sFig1A-B"
+output: html_notebook
+---
+
+Figure S1.
+Load libraries.
+```{r}
+library(tidyverse)
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+```
+
+Download TCGA-LUSC data.
+```{r}
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+
+# Define the query for SKCM transcriptome profiling
+query_lusc <- TCGAbiolinks::GDCquery(
+    project = "TCGA-LUSC",
+    data.category = "Transcriptome Profiling",
+    data.type = "Gene Expression Quantification",
+    workflow.type = "STAR - Counts" # Standard GDC harmonization pipeline
+)
+
+TCGAbiolinks::GDCdownload(query_lusc)
+
+data_lusc <- TCGAbiolinks::GDCprepare(query_lusc)
+
+# Extract expression matrix
+expr_matrix_tpm_lusc <- SummarizedExperiment::assay(data_lusc,
+                                                "tpm_unstrand"   # choose "unstranded" for raw counts
+                                                )
+
+expr_matrix_raw_lusc <- SummarizedExperiment::assay(data_lusc,
+                                                "unstranded"   # choose "unstranded" for raw counts
+                                                )
+
+# Extract clinical metadata
+clinical_lusc <- as.data.frame(colData(data_lusc))
+```
+
+Download TCGA-LUAD data.
+```{r}
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+
+# Define the query for SKCM transcriptome profiling
+query_luad <- TCGAbiolinks::GDCquery(
+    project = "TCGA-LUAD",
+    data.category = "Transcriptome Profiling",
+    data.type = "Gene Expression Quantification",
+    workflow.type = "STAR - Counts" # Standard GDC harmonization pipeline
+)
+
+TCGAbiolinks::GDCdownload(query_luad)
+
+data_luad <- TCGAbiolinks::GDCprepare(query_luad)
+
+# Extract expression matrix in TPM values
+expr_matrix_tpm_luad <- SummarizedExperiment::assay(data_luad, 
+                                                "tpm_unstrand"   # choose "unstranded" for raw counts
+                                                )
+expr_matrix_raw_luad <- SummarizedExperiment::assay(data_lusc,
+                                                "unstranded"   # choose "unstranded" for raw counts
+                                                )
+
+# Extract clinical metadata
+clinical_luad <- as.data.frame(colData(data_luad))
+```
+
+
+Download TCGA-SKCM data.
+```{r}
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+
+# Define the query for SKCM transcriptome profiling
+query_skcm <- TCGAbiolinks::GDCquery(
+    project = "TCGA-SKCM",
+    data.category = "Transcriptome Profiling",
+    data.type = "Gene Expression Quantification",
+    workflow.type = "STAR - Counts" # Standard GDC harmonization pipeline
+)
+
+TCGAbiolinks::GDCdownload(query_skcm)
+
+data_skcm <- TCGAbiolinks::GDCprepare(query_skcm)
+
+# Extract expression matrix in TPM values
+expr_matrix_tpm_skcm <- SummarizedExperiment::assay(data_skcm, 
+                                                "tpm_unstrand"   # choose "unstranded" for raw counts
+                                                )
+expr_matrix_raw_skcm <- SummarizedExperiment::assay(data_skcm,
+                                                "unstranded"   # choose "unstranded" for raw counts
+                                                )
+
+# Extract clinical metadata
+clinical_skcm <- as.data.frame(colData(data_skcm))
+```
+
+
+
+```{r}
+# This function perform filtering protein-coding genes, convert from ENSEMBL to symbols, and aggregate duplicated genes.
+process_expression_matrix <- function(expr_matrix, se_object, agg_func = mean) {
+  
+  # 1. Extract annotation and filter for protein_coding
+  gene_info <- as.data.frame(SummarizedExperiment::rowRanges(se_object))
+  # Ensure we have the IDs as a column
+  gene_info$ensembl_id <- rownames(gene_info)
+  
+  protein_coding_genes <- gene_info$ensembl_id[gene_info$gene_type == "protein_coding"]
+  
+  # 2. Subset matrix to only protein-coding IDs present in the matrix
+  common_ids <- intersect(rownames(expr_matrix), protein_coding_genes)
+  expr_sub <- expr_matrix[common_ids, , drop = FALSE]
+  
+  # 3. Create mapping vector (Ensembl ID -> Gene Symbol)
+  # subset gene_info to only those in the matrix for performance
+  mapping_vec <- setNames(gene_info$gene_name[match(rownames(expr_sub), gene_info$ensembl_id)], 
+                          rownames(expr_sub))
+  
+  # 4. Remove rows with no mapping (NAs)
+  valid_rows <- !is.na(mapping_vec)
+  expr_final <- expr_sub[valid_rows, , drop = FALSE]
+  symbols <- mapping_vec[valid_rows]
+  
+  # 5. Aggregate duplicates
+  # rowsum works by summing; for mean, we compute sum / count
+  if (identical(agg_func, mean)) {
+    counts <- as.vector(table(symbols)[symbols])
+    sum_matrix <- rowsum(expr_final, group = symbols, reorder = FALSE)
+    return(sum_matrix / counts)
+  } else {
+    return(rowsum(expr_final, group = symbols, reorder = FALSE))
+  }
+}
+```
+
+Use process_expression_matrix to clean expression matrix.
+```{r}
+# Clean TCGA-LUAD
+clean_expr_matrix_tpm_luad <- process_expression_matrix(expr_matrix = expr_matrix_tpm_luad,
+                                                    se_object = data_luad,
+                                                    agg_func = mean)
+
+# Clean TCGA-LUSC
+clean_expr_matrix_tpm_lusc <- process_expression_matrix(expr_matrix = expr_matrix_tpm_lusc,
+                                                    se_object = data_lusc,
+                                                    agg_func = mean)
+
+# Clean TCGA-SKCM
+clean_expr_matrix_tpm_skcm <- process_expression_matrix(expr_matrix = expr_matrix_tpm_skcm,
+                                                        se_object = data_skcm,
+                                                        agg_func = mean)
+
+```
+
+Filter clinical data in TCGA-LUAD and TCGA-LUSC.
+```{r}
+# Filter clinical data TCGA-LUAD
+# 1. TCGA-LUAD
+meta_luad <- clinical_luad %>%
+  dplyr::select(barcode, definition, tissue_or_organ_of_origin) %>%
+  mutate("group" = case_when(definition %in% c("Metastatic","Additional Metastatic") ~ "Metastatic",
+                             definition %in% c("Primary solid Tumor","Recurrent Solid Tumor") ~ "Tumor",
+                             definition %in% c("Solid Tissue Normal") ~ "Normal",
+                             TRUE ~ definition),
+         "geo_accession" = barcode,
+         "title" = "LUAD") %>%
+  dplyr::select(geo_accession,title,barcode,group) %>%
+  `colnames<-`(., c("geo_accession","title","barcode","group"))
+
+# Add factor levels to group
+meta_luad$group <- factor(meta_luad$group, levels = c("Normal","Tumor","Metastatic"))
+
+# ---
+# 2. TCGA-LUSC
+meta_lusc <- clinical_lusc %>%
+  dplyr::select(barcode, definition, tissue_or_organ_of_origin) %>%
+  mutate("group" = case_when(definition %in% c("Metastatic","Additional Metastatic") ~ "Metastatic",
+                             definition %in% c("Primary solid Tumor","Recurrent Solid Tumor") ~ "Tumor",
+                             definition %in% c("Solid Tissue Normal") ~ "Normal",
+                             TRUE ~ definition),
+         "geo_accession" = barcode,
+         "title" = "LUSC") %>%
+  dplyr::select(geo_accession,title,barcode,group) %>%
+  `colnames<-`(., c("geo_accession","title","barcode","group"))
+
+# Add factor levels to group
+meta_lusc$group <- factor(meta_lusc$group, levels = c("Normal","Tumor","Metastatic"))
+
+# ---
+# 3. TCGA-SKCM
+meta_skcm <- clinical_skcm %>%
+  dplyr::select(barcode, definition, tissue_or_organ_of_origin) %>%
+  mutate("group" = case_when(definition %in% c("Metastatic","Additional Metastatic") ~ "Metastatic",
+                             definition %in% c("Primary solid Tumor","Recurrent Solid Tumor") ~ "Tumor",
+                             definition %in% c("Solid Tissue Normal") ~ "Normal",
+                             TRUE ~ definition),
+         "geo_accession" = barcode,
+         "title" = "SKCM") %>%
+  dplyr::select(geo_accession,title,barcode,group) %>%
+  `colnames<-`(., c("geo_accession","title","barcode","group"))
+
+# Add factor levels to group
+meta_skcm$group <- factor(meta_skcm$group, levels = c("Normal","Tumor","Metastatic"))
+```
+
+Combine expression matices and meta data tables from TCGA-LUAD and TCGA-LUSC.
+```{r}
+# Combine expression matrices TCGA-LUAD and TCGA-LUSC
+# by column
+# Add Symbol columns to both matrices
+# TCGA-LUAD
+clean_expr_matrix_tpm_luad <- clean_expr_matrix_tpm_luad %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column(., var = "Symbol")
+
+# TCGA-LUSC
+clean_expr_matrix_tpm_lusc <- clean_expr_matrix_tpm_lusc %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column(., var = "Symbol")
+
+# TCGA-SKCM
+clean_expr_matrix_tpm_skcm <- clean_expr_matrix_tpm_skcm %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column(., var = "Symbol")
+
+
+combined_expr_matrix_tpm_lung <- merge(clean_expr_matrix_tpm_luad, clean_expr_matrix_tpm_lusc, by = "Symbol")
+
+combined_expr_matrix_tpm_lung_skcm <- merge(combined_expr_matrix_tpm_lung, clean_expr_matrix_tpm_skcm, by = "Symbol")
+ 
+# Combine metadata tables
+# by row
+combined_meta_lung <- rbind(meta_luad, meta_lusc)
+
+combined_meta_lung_skcm <- rbind(combined_meta_lung, meta_skcm)
+
+```
+
+
+2. Download expression and metadata of nevi and melanoma dataset (GSE112509).
+```{r}
+# GSE112509 Nevi vs. Melanoma
+# load counts table from GEO
+urld <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+path <- paste(urld, "acc=GSE112509", "file=GSE112509_norm_counts_TPM_GRCh38.p13_NCBI.tsv.gz", sep="&");
+tbl <- as.matrix(data.table::fread(path, header=T, colClasses="integer"), rownames="GeneID")
+
+# load gene annotations 
+apath <- paste(urld, "type=rnaseq_counts", "file=Human.GRCh38.p13.annot.tsv.gz", sep="&")
+annot <- data.table::fread(apath, header=T, quote="", stringsAsFactors=F, data.table=F)
+rownames(annot) <- annot$GeneID
+
+# filter only protein-coding gene
+annot <- annot[annot$GeneType == "protein-coding",]
+
+# sample selection
+gsms <- paste0("00000000000001111111111111111111111111100000000001",
+        "11111111111111111111111111111")
+sml <- strsplit(gsms, split="")[[1]]
+
+# group membership for samples
+gs <- factor(sml)
+groups <- make.names(c("Nevi","Melanoma"))
+levels(gs) <- groups
+sample_info <- data.frame(Group = gs, row.names = colnames(tbl))
+
+# pre-filter low count genes
+# keep genes with at least N counts > 10, where N = size of smallest group
+# keep <- rowSums( tbl >= 10 ) >= min(table(gs))
+# tbl <- tbl[keep, ]
+tbl <- tbl[rownames(tbl) %in% rownames(annot),]
+
+# annot must have GeneID and Symbol columns, with rownames(annot) == annot$GeneID
+ncbi_to_symbol <- function(gene_ids, annot) {
+  symbols <- annot$Symbol[match(as.character(gene_ids), rownames(annot))]
+  names(symbols) <- gene_ids
+  symbols
+}
+
+# usage
+gene_symbols <- ncbi_to_symbol(rownames(tbl), annot)
+# head(gene_symbols)
+
+# to relabel the count matrix rows directly:
+rownames(tbl) <- ncbi_to_symbol(rownames(tbl), annot)
+
+expr_gse112509 <- tbl
+
+myFd2 <- "GSE112509_Nevi_Melanoma"
+setwd(myFd2)
+meta_gse112509 <- read.csv("Table_MetadataMatrix.csv")
+meta_gse112509 <- meta_gse112509 %>%
+  mutate("geo_accession" = barcode,
+         "title" = "skin",
+         "group" = case_when(Group == "Nevi" ~ "Nevus",
+                             TRUE ~ Group)) %>%
+  dplyr::select(geo_accession,title,barcode,group) %>%
+  `colnames<-`(., c("geo_accession","title","barcode","group"))
+meta_gse112509$group <- factor(meta_gse112509$group, levels = c("Nevus","Melanoma"))
+
+```
+
+
+```{r}
+# --- THE SCALED BOXPLOT FUNCTION ---
+library(dplyr)
+library(tidyr)
+library(ggpubr)
+library(rstatix)
+
+plot_comparable_boxplot <- function(expr_matrix, # Symbols in rownames, samples in columns
+                                    metadata_df,
+                                    target_genes,
+                                    title,
+                                    ref_group = "Normal",
+                                    transform = c("log2", "zscore", "none")) {
+
+  # 0. Initial Setup
+  transform <- match.arg(transform)
+  colnames(expr_matrix) <- gsub("^X", "", colnames(expr_matrix))
+
+  # 1. Sample Matching Logic
+  id_cols <- c("geo_accession", "title", "barcode")
+  common_samples <- character(0)
+
+  for (col in id_cols) {
+    if (col %in% colnames(metadata_df)) {
+      test_samples <- intersect(colnames(expr_matrix), metadata_df[[col]])
+      if (length(test_samples) > 0) {
+        common_samples <- test_samples
+        # Important: set rownames based on the match to ensure alignment
+        temp_meta <- metadata_df
+        rownames(temp_meta) <- temp_meta[[col]]
+        metadata_df <- temp_meta
+        message("Successfully matched using column: ", col)
+        break
+      }
+    }
+  }
+
+  if (length(common_samples) == 0) {
+    stop("Error: No overlapping samples found.")
+  }
+
+  # 2. Subset and Relevel
+  expr_sub <- expr_matrix[, common_samples, drop = FALSE]
+  meta_sub <- metadata_df[common_samples, , drop = FALSE]
+  meta_sub$group <- as.factor(meta_sub$group)
+  if (ref_group %in% levels(meta_sub$group)) {
+    meta_sub$group <- relevel(meta_sub$group, ref = ref_group)
+  }
+
+  # 3. Data Transformation
+  present_genes <- intersect(target_genes, rownames(expr_sub))
+  subset_expr <- expr_sub[present_genes, , drop = FALSE]
+
+  if (transform == "log2") {
+    # Calculate log2(TPM + 1)
+    processed_expr <- log2(subset_expr + 1)
+    y_label <- "Expression [log2(TPM+1)]"
+  } else if (transform == "zscore") {
+    # Log transform first, then Z-score (standard practice)
+    log_expr <- log2(subset_expr + 1)
+    processed_expr <- t(apply(log_expr, 1, scale))
+    colnames(processed_expr) <- colnames(subset_expr)
+    y_label <- "Expression (Z-score)"
+  } else {
+    processed_expr <- subset_expr
+    y_label <- "Expression (Raw)"
+  }
+
+  # 4. Pivot Data for ggplot
+  data_long <- as.data.frame(t(processed_expr)) %>%
+    mutate(Group = meta_sub$group) %>%
+    pivot_longer(cols = all_of(present_genes), names_to = "Gene", values_to = "Val") %>%
+    mutate(Gene = factor(Gene, levels = present_genes))  # keep facet order stable
+
+  # 5. Define Comparison Pairs (ref_group vs each other level)
+  group_names <- levels(meta_sub$group)
+  my_comparisons <- list()
+  if (length(group_names) >= 2) {
+    for (i in 2:length(group_names)) {
+      my_comparisons[[i - 1]] <- c(group_names[1], group_names[i])
+    }
+  }
+
+  # 6. Pre-compute stats + bracket positions PER FACET (per Gene)
+  # This is the key fix: stat_compare_means()'s automatic label.y placement
+  # is NOT reliably facet-aware when facet_wrap(scales = "free_y") is used,
+  # so brackets/labels can be calculated using the wrong y-range and end up
+  # drawn outside the visible panel (i.e. "missing"). We compute an explicit
+  # y.position for every comparison ourselves, separately within each Gene's
+  # own data range, then stat_pvalue_manual() draws exactly at those
+  # coordinates. add_significance() guarantees every pair gets a label
+  # ("ns" through "****"), never blank.
+  # (Note: deliberately NOT using rstatix::add_xy_position() here since it
+  # requires rstatix >= 0.6.0 and isn't available in all environments; the
+  # manual y.position calculation below achieves the same result.)
+  stat.test <- data_long %>%
+    group_by(Gene) %>%
+    wilcox_test(Val ~ Group, comparisons = my_comparisons) %>%
+    ungroup() %>%
+    adjust_pvalue(method = "BH") %>%
+    add_significance("p.adj")
+
+  gene_ymax <- data_long %>%
+    group_by(Gene) %>%
+    summarise(y_base = max(Val, na.rm = TRUE), .groups = "drop")
+
+  stat.test <- stat.test %>%
+    left_join(gene_ymax, by = "Gene") %>%
+    group_by(Gene) %>%
+    mutate(y.position = y_base + y_base * 0.08 + (row_number() - 1) * (y_base * 0.12)) %>%
+    ungroup() %>%
+    dplyr::select(-y_base)
+
+  # 7. Generate Plot
+  p <- ggboxplot(data_long,
+                 x = "Group",
+                 y = "Val",
+                 color = "Group",
+                 palette = "npj",
+                 add = "jitter",                    # show individual sample points
+                 add.params = list(size = 1.4, alpha = 0.5, jitter = 0.2),
+                 outlier.shape = NA,                 # avoid double-plotting outliers; jitter already shows all points
+                 short.panel.labs = TRUE,
+                 panel.labs.font = list(face = "bold")) +
+    stat_pvalue_manual(stat.test,
+                        label = "p.adj.signif",      # always draws a label: ns, *, **, ***, ****
+                        hide.ns = FALSE,
+                        tip.length = 0.01,
+                        bracket.size = 0.4) +
+    labs(title = title,
+         y = y_label,
+         x = NULL) +
+    theme_bw() +
+    scale_y_continuous(limits = c(0, 10),
+                       expand = expansion(mult = c(0, 0.08))) +  # small extra headroom above computed brackets
+    theme(axis.text.x = element_text(angle = 0, hjust = 0.5, vjust = 1),
+          strip.background = element_rect(fill = "gray95", color = "gray80"),
+          strip.text = element_text(size = 11),
+          legend.position = "none") +
+    facet_wrap(~Gene)
+
+  return(p)
+}
+
+
+# --- CV (COEFFICIENT OF VARIATION) CALCULATION & COMPARISON HELPER ---
+# Companion to plot_comparable_boxplot(): uses the same sample-matching
+# logic (geo_accession / title / barcode) and group releveling so it can
+# be dropped straight into km_and_barplot_helpers.R.
+#
+# Requires: install.packages("cvequality")  (Feltz & Miller / Krishnamoorthy & Lee tests)
+
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(cvequality)
+
+calc_cv_stats <- function(expr_matrix,       # Symbols in rownames, samples in columns (TPM)
+                           metadata_df,
+                           target_genes,
+                           ref_group = "Normal",
+                           scale = c("raw", "log2"),
+                           test_method = c("asymptotic", "mslr"),
+                           n_resamples = 1000) {
+
+  scale <- match.arg(scale)
+  test_method <- match.arg(test_method)
+  colnames(expr_matrix) <- gsub("^X", "", colnames(expr_matrix))
+
+  # 1. Sample matching (identical logic to plot_comparable_boxplot)
+  id_cols <- c("geo_accession", "title", "barcode")
+  common_samples <- character(0)
+  for (col in id_cols) {
+    if (col %in% colnames(metadata_df)) {
+      test_samples <- intersect(colnames(expr_matrix), metadata_df[[col]])
+      if (length(test_samples) > 0) {
+        common_samples <- test_samples
+        temp_meta <- metadata_df
+        rownames(temp_meta) <- temp_meta[[col]]
+        metadata_df <- temp_meta
+        message("Successfully matched using column: ", col)
+        break
+      }
+    }
+  }
+  if (length(common_samples) == 0) stop("Error: No overlapping samples found.")
+
+  # 2. Subset and relevel
+  expr_sub <- expr_matrix[, common_samples, drop = FALSE]
+  meta_sub <- metadata_df[common_samples, , drop = FALSE]
+  meta_sub$group <- as.factor(meta_sub$group)
+  if (ref_group %in% levels(meta_sub$group)) {
+    meta_sub$group <- relevel(meta_sub$group, ref = ref_group)
+  }
+
+  present_genes <- intersect(target_genes, rownames(expr_sub))
+  subset_expr <- expr_sub[present_genes, , drop = FALSE]
+
+  # NOTE ON SCALE: CV = SD / mean is only meaningful on a true ratio scale
+  # with a meaningful zero (raw TPM). log2(TPM+1) shifts/compresses the
+  # scale and z-scoring forces mean = 0 (CV undefined), so both distort CV.
+  # Default is "raw"; "log2" is offered only if you have a specific reason
+  # to compare dispersion on the log scale (interpret with caution).
+  if (scale == "log2") {
+    subset_expr <- log2(subset_expr + 1)
+  }
+
+  data_long <- as.data.frame(t(subset_expr)) %>%
+    mutate(Group = meta_sub$group) %>%
+    pivot_longer(cols = all_of(present_genes), names_to = "Gene", values_to = "Val") %>%
+    filter(!is.na(Val))
+
+  # 3. Descriptive CV per Gene x Group
+  cv_summary <- data_long %>%
+    group_by(Gene, Group) %>%
+    summarise(
+      n      = dplyr::n(),
+      mean   = mean(Val, na.rm = TRUE),
+      sd     = sd(Val, na.rm = TRUE),
+      CV     = sd / mean,      # unitless ratio; undefined/unstable if mean ~ 0
+      CV_pct = CV * 100,
+      .groups = "drop"
+    ) %>%
+    arrange(Gene, Group)
+
+  # 4. Omnibus test for equality of CVs across ALL groups, per gene
+  #    - "asymptotic": Feltz & Miller (1996) chi-squared test, fast, best for
+  #      larger n per group.
+  #    - "mslr": Krishnamoorthy & Lee (2014) modified signed log-likelihood
+  #      ratio test with resampled critical values; more reliable for small
+  #      or unequal group sizes.
+  run_cv_test <- function(x, y) {
+    if (test_method == "asymptotic") {
+      res <- cvequality::asymptotic_test(x = x, y = y)
+      tibble(statistic = res$D_AD, df = length(unique(y)) - 1,
+             p.value = res$p_value, method = "Feltz-Miller asymptotic")
+    } else {
+      res <- cvequality::mslr_test(nr = n_resamples, x = x, y = y)
+      tibble(statistic = res$MSLRT, df = NA_real_,
+             p.value = res$p_value, method = "Krishnamoorthy-Lee MSLRT")
+    }
+  }
+
+  cv_test_overall <- data_long %>%
+    group_by(Gene) %>%
+    group_modify(~ run_cv_test(.x$Val, as.character(.x$Group))) %>%
+    ungroup() %>%
+    mutate(p.adj = p.adjust(p.value, method = "BH"))  # across genes
+
+  # 5. Pairwise CV comparisons: ref_group vs each other group, per gene
+  other_groups <- setdiff(levels(meta_sub$group), ref_group)
+
+  cv_test_pairwise <- purrr::map_dfr(present_genes, function(g) {
+    purrr::map_dfr(other_groups, function(grp) {
+      sub <- data_long %>% filter(Gene == g, Group %in% c(ref_group, grp))
+      out <- run_cv_test(sub$Val, as.character(sub$Group))
+      out %>% mutate(Gene = g, Comparison = paste(ref_group, "vs", grp), .before = 1)
+    })
+  }) %>%
+    group_by(Gene) %>%
+    mutate(p.adj = p.adjust(p.value, method = "BH")) %>%  # BH within each gene's pairwise set
+    ungroup()
+
+  list(
+    cv_summary       = cv_summary,       # n, mean, sd, CV, CV_pct per Gene x Group
+    cv_test_overall  = cv_test_overall,  # k-group omnibus test per Gene
+    cv_test_pairwise = cv_test_pairwise  # ref_group vs each other group, per Gene
+  )
+}
+```
+
+
+Supplement Figure 1. IRF2 expression levels in melanoma (nevus vs. melanoma) and NSCLC (normal vs. tumor). 
+Expression level (in TPM) from TCGA_lung and melanoma_gse112509 do not require side-by-side comparison.
+We can separately plot IRF2 expression level in melanoma and NSCLC.
+```{r}
+# Move Symbol column to rownames for compatiblity with the plot_comparable_boxplot function
+combined_expr_matrix_tpm_lung <- combined_expr_matrix_tpm_lung %>%
+  tibble::column_to_rownames(., var = "Symbol")
+
+# TCGA-SKCM
+FigS1_Boxplot_lung <- plot_comparable_boxplot(expr_matrix = combined_expr_matrix_tpm_lung,
+                        metadata_df = combined_meta_lung,
+                        target_genes = "IRF2",
+                        title = "TCGA-NSCLC",
+                        ref_group = "Normal",
+                        transform = "log2")
+
+FigS1_Boxplot_lung
+```
+
+
+```{r}
+# GSE112509 Melanoma
+FigS1_Boxplot_melanoma <- plot_comparable_boxplot(expr_matrix = expr_gse112509,
+                        metadata_df = meta_gse112509,
+                        target_genes = "IRF2",
+                        title = "GSE112509",
+                        ref_group = "Nevus",
+                        transform = "log2")
+
+FigS1_Boxplot_melanoma
+```
+
+Combine FigS1 Melanoma and NSCLC
+```{r}
+library(ggpubr)
+
+FigS1 <-ggarrange(FigS1_Boxplot_melanoma, FigS1_Boxplot_lung,
+          nrow = 1, ncol = 2, align = "hv", labels = c("A","B"))
+
+FigS1
+```
+
+We added more melanoma samples to the clinical cohorts to increase variance.
+Download expression tables containing expression levels (in TPM) and metadata.
+```{r}
+# Download RData 
+# load("IRF2_Project_FigureS1.RData")
+
+# Process expression data and metadata are downloaded from RData file already in use in the Shiny app
+load("multiple_cohorts_data.RData")
+
+source("FunctionCollection.R")
+
+# Define a list of datasets (unique study ID)
+datasets <- c("PHS000452_GSE91061","PRJEB23709","SU2CMARK")
+
+# The clinical and gene expression data is stored as df_tf.
+df_tf <- df_tf %>%
+  distinct(SampleID, StudyID, .keep_all = TRUE)
+
+df_C1_pre <- df_tf %>% 
+  subset(StudyID == datasets[1] & BiopsyTime == "Pre") %>%
+  dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_C2_pre <- df_tf %>%
+  subset(StudyID == datasets[2] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_NSCLC_pre <- df_tf %>%
+  subset(StudyID == datasets[3] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+# Combine all pre-tx samples from three cohorts
+df_pre <- rbind(df_C1_pre, df_C2_pre, df_NSCLC_pre)
+
+### Create list of patients and studyID
+### Separate Cohort 1 into original studies PHS000452 and GSE91061
+df_str_C1C2 <- do.call(rbind,strsplit(df_pre$SampleID, "_(?=[^_]*$)", perl = TRUE)) %>%
+  as.data.frame() %>%
+  `colnames<-`(., c("SampleID", "Cohort")) %>%
+  subset(Cohort %in% c("C2n5","PRE")) %>%
+  mutate(StudyID = meta_df_tf$group[match(.$SampleID,meta_df_tf$barcode)]) %>%
+  mutate(StudyID = ifelse(is.na(StudyID), "PRJEB23709", StudyID)) %>%
+  mutate(SampleID = ifelse(StudyID == "PRJEB23709",paste0(SampleID,"_",Cohort),SampleID))
+
+### Use this table to filter Cohort 1 in gene expression table
+
+# Create expression matrix from df_tf
+# Expression matrix has
+# columns = patients
+# rows = genes
+# values = expression levels in TPM
+expr_df_tf <- df_tf %>%
+  # Select malanoma cohorts
+  subset(StudyID %in% c("PRJEB23709","PHS000452","GSE91061")) %>%
+  # Select samples 
+  subset(SampleID %in% df_str_C1C2$SampleID) %>%
+  # Select Pre-treatment biopsies
+  # subset(BiopsyTime == "Pre") %>%
+  # Select SampleID and Genes columns
+  dplyr::select(-c(PatientID,BiopsyMatch,BiopsyTime,Response,OS_Status,OS_Time,Prior_Tx,Regimen,StudyID)) %>%
+  # Transform table using transpose function
+  `rownames<-`(.,NULL) %>%
+  tibble::column_to_rownames(., var = "SampleID") %>%
+  t()
+  
+meta_df_tf <- df_str_C1C2 %>%
+  dplyr::select(SampleID,StudyID) %>%
+  `colnames<-`(., c("barcode","group"))
+
+# Create metadata table from df_tf
+# Metada matrix has
+# rows = patients
+# columns = geo_accession, title, barcode, group
+
+```
+
+Check whether expression level from both datasets can be combined.
+```{r}
+# install.packages("factoextra")
+# install.packages("FactoMineR")
+
+res_gse <- FactoMineR::PCA(t(expr_gse112509), graph = FALSE)
+
+cos2_gse <- res_gse$ind$coord %>% 
+  as.data.frame(.) %>% 
+  tibble::rownames_to_column(., var = "SampleID") 
+
+# Add Group labels
+cos2_gse$group <- meta_gse112509$group[match(cos2_gse$SampleID,meta_gse112509$barcode)]
+
+Fig_PCA_gse <- ggplot(cos2_gse,
+       aes(x = Dim.1,
+           y = Dim.2,
+           color = group)) +
+  geom_point()
+
+Fig_PCA_gse
+```
+
+```{r}
+res_dfmel <- FactoMineR::PCA(t(expr_df_tf), graph = FALSE)
+
+cos2_dfmel <- res_dfmel$ind$coord %>% 
+  as.data.frame(.) %>% 
+  tibble::rownames_to_column(., var = "SampleID") 
+
+# Add Group labels
+cos2_dfmel$group <- meta_df_tf$group[match(cos2_dfmel$SampleID,meta_df_tf$barcode)]
+
+Fig_PCA_dfmel <- ggplot(cos2_dfmel,
+       aes(x = Dim.1,
+           y = Dim.2,
+           color = group)) +
+  geom_point()
+
+Fig_PCA_dfmel
+```
+
+Combine expr_df_tf and expr_gse112509.
+```{r}
+# Try to combine expression level table of df_tf and gse112509
+# A. without batch effect removal
+
+# 1. Convert GSE112509 to dataframe and create Gene column.
+# Assign it to df_a
+df_a <- tibble::rownames_to_column(as.data.frame(expr_gse112509), var = "Gene")
+
+meta_df_a <- dplyr::select(meta_gse112509, c(barcode,group))
+
+# 2. Process original df_tf
+# Because the samples in GSE112509 has nevi (n = 23) and melanoma (n = 57) without other information,
+# we can assume that they were collected from patients as routine biopsy before treatment.
+# Therefore, samples in original df_tf whose biopsies were collected pre-treatment (BiopsyTime = "Pre")
+# and patients never receive any treatment (Prior_Tx = Naive) will be included in this integrated dataset.
+
+# Create expression table as df_b
+df_b <- expr_df_tf # %>%
+  # # Select malanoma cohorts
+  # subset(StudyID %in% c("PRJEB23709","PHS000452","GSE91061")) %>%
+  # # Select Pre-treatment biopsies
+  # subset(BiopsyTime == "Pre" & Prior_Tx %in% c("Tx_Naive","Ipi_Naive")) %>%
+  # # Select SampleID and Genes columns
+  # dplyr::select(-c(PatientID,BiopsyMatch,BiopsyTime,Response,OS_Status,OS_Time,Prior_Tx,Regimen,StudyID)) %>%
+  # # Transform table using transpose function
+  # `rownames<-`(.,NULL) %>%
+  # tibble::column_to_rownames(., var = "SampleID") %>%
+  # t()
+
+# Create metadata table  
+meta_df_b <- meta_df_tf
+
+# meta_df_b$group <- "Melanoma"
+
+# meta_df_b$group <- df_tf$StudyID[match(meta_df_b$barcode, df_tf$SampleID)]
+
+# Convert df_b to dataframe and add Gene column
+df_b <- tibble::rownames_to_column(as.data.frame(df_b), var = "Gene")
+
+# Combine the expression tables
+combine_df_noCombat <-  inner_join(df_a,df_b, by = "Gene",) %>%
+  tibble::column_to_rownames(., var = "Gene") %>%
+  as.matrix()
+
+# Combine metadata tables
+combine_meta_ab <- rbind(meta_df_a,meta_df_b)
+
+# --- Run PCA and show dotplot ---
+res_df_noCombat <- FactoMineR::PCA(t(combine_df_noCombat), graph = FALSE)
+
+# Extract samples and PCA coordinates 
+indv_df_noCombat <- res_df_noCombat$ind$coord %>% 
+  as.data.frame(.) %>% 
+  tibble::rownames_to_column(., var = "SampleID") 
+
+# Add Group labels
+indv_df_noCombat$group <- combine_meta_ab$group[match(indv_df_noCombat$SampleID,combine_meta_ab$barcode)]
+
+# Draw dotplots 
+Fig_PCA_Comb_noCombat <- ggplot(indv_df_noCombat,
+       aes(x = Dim.1,
+           y = Dim.2,
+           color = group)) +
+  geom_point()
+
+Fig_PCA_Comb_noCombat
+
+```
+
+Apply Combat_seq function to adjust expression values.
+```{r}
+combine_meta_ab <- rbind(meta_df_a, meta_df_b)
+
+# Add new batch and group to existing metatable
+combine_meta_ab <- combine_meta_ab %>%
+  mutate(batch = case_when(group %in% c("Nevus", "Melanoma") ~ 1,
+                           group %in% c("PRJEB23709") ~ 2,
+                           group %in% c("PHS000452") ~ 3,
+                           group %in% c("GSE91061") ~ 4),
+         celltype = ifelse(group %in% c("Nevus"),"Nevus", "Melanoma"))
+
+
+# Apply Combat_seq
+library(sva)
+combine_df_Combat <- sva::ComBat_seq(counts = combine_df_noCombat, 
+                                     batch = combine_meta_ab$batch, 
+                                     group = combine_meta_ab$celltype)
+
+# --- Run PCA and show dotplot ---
+res_df_Combat <- FactoMineR::PCA(t(combine_df_Combat), graph = FALSE)
+
+# Extract samples and PCA coordinates 
+indv_df_Combat <- res_df_Combat$ind$coord %>% 
+  as.data.frame(.) %>% 
+  tibble::rownames_to_column(., var = "SampleID") 
+
+# Add Group labels
+indv_df_Combat$group <- combine_meta_ab$group[match(indv_df_Combat$SampleID,combine_meta_ab$barcode)]
+
+# Draw dotplots 
+Fig_PCA_Comb_Combat <- ggplot(indv_df_Combat,
+       aes(x = Dim.1,
+           y = Dim.2,
+           color = group)) +
+  geom_point()
+
+Fig_PCA_Comb_Combat
+
+```
+
+Visualize IRF2 expression level in Nevus vs. combined melanoma (without Combat_seq).
+```{r}
+# Rename column headers in combine_meta_ab to match with function plot_comparable_boxplot
+colnames(combine_meta_ab) <- c("barcode","StudyID","batch","group")
+
+# GSE112509 Melanoma
+Fig_Box_Comb_noCombat <- plot_comparable_boxplot(expr_matrix = combine_df_noCombat,
+                        metadata_df = combine_meta_ab,
+                        target_genes = "IRF2",
+                        title = "Combined Cohorts no Combat-seq",
+                        ref_group = "Nevus",
+                        transform = "log2")
+
+Fig_Box_Comb_noCombat
+
+```
+
+Visualize IRF2 expression level in Nevus vs. combined melanoma (after Combat_seq).
+```{r}
+# Rename column headers in combine_meta_ab to match with function plot_comparable_boxplot
+# colnames(combine_meta_ab) <- c("barcode","StudyID","batch","group")
+
+# GSE112509 Melanoma
+Fig_Box_Comb_Combat <- plot_comparable_boxplot(expr_matrix = combine_df_Combat,
+                        metadata_df = combine_meta_ab,
+                        target_genes = "IRF2",
+                        title = "Combined Cohorts after Combat-seq",
+                        ref_group = "Nevus",
+                        transform = "log2")
+
+Fig_Box_Comb_Combat
+
+```
+
+Alternative combine FigS1 Melanoma and NSCLC
+```{r}
+FigS1_v2 <- ggpubr::ggarrange(Fig_Box_Comb_Combat, FigS1_Boxplot_lung,
+          nrow = 1, ncol = 2, align = "hv")
+
+FigS1_v2
+```
+
+
+

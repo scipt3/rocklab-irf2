@@ -1,0 +1,141 @@
+---
+title: "Figure 4 and Table 1"
+output: html_notebook
+---
+
+Download libraries.
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(ComplexHeatmap)
+```
+
+Download RData from the folder.
+```{r}
+# Load RData file containing data required for analysis and visualization.
+load("multiple_cohorts_data.RData")
+
+source("FunctionCollection.R")
+
+# Define a list of datasets (unique study ID)
+datasets <- c("PHS000452_GSE91061","PRJEB23709","SU2CMARK")
+
+# The clinical and gene expression data is stored as df_tf.
+df_tf <- df_tf %>%
+  distinct(SampleID, StudyID, .keep_all = TRUE)
+
+df_C1_pre <- df_tf %>% 
+  subset(StudyID == datasets[1] & BiopsyTime == "Pre") %>%
+  dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_C2_pre <- df_tf %>%
+  subset(StudyID == datasets[2] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_NSCLC_pre <- df_tf %>%
+  subset(StudyID == datasets[3] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+# Combine all pre-tx samples from three cohorts
+df_pre <- rbind(df_C1_pre, df_C2_pre, df_NSCLC_pre)
+```
+
+
+```{r}
+# Define list of immune cell type
+cell_types <- c("B.cells.naive","B.cells.memory","Plasma.cells",
+                "T.cells.CD8","T.cells.CD4.naive","T.cells.CD4.memory.resting","T.cells.CD4.memory.activated",
+                "T.cells.follicular.helper","T.cells.regulatory..Tregs.","T.cells.gamma.delta",
+                "NK.cells.resting","NK.cells.activated",
+                "Monocytes","Macrophages.M0","Macrophages.M1","Macrophages.M2",
+                "Dendritic.cells.resting","Dendritic.cells.activated",
+                "Mast.cells.resting","Mast.cells.activated",
+                "Eosinophils","Neutrophils"
+                )
+
+```
+
+Cohort 1 Pre-Tx 50% IRF2 - Plot immune cell fractions.
+```{r}
+df_in <- df_pre %>%
+  subset(StudyID == datasets[1] & BiopsyTime == "Pre")
+
+Fig4_C1_P50 <- plot_cell_fraction_boxplot(df = df_in,
+                                      gene_col = "IRF2", 
+                                      cell_types = cell_types,
+                                      cohort_col = "StudyID", 
+                                      cohort = datasets[1],
+                                      split_pct = 50, 
+                                      subgroup_col = NULL, 
+                                      norm_type = "log2"
+)
+
+Fig4_C1_P50
+```
+
+
+Cohort 2 Pre-Tx 50% IRF2 - Plot immune cell fractions.
+```{r}
+df_in <- df_pre %>%
+  subset(StudyID == datasets[2] & BiopsyTime == "Pre")
+
+Fig4_C2_P50 <- plot_cell_fraction_boxplot(df = df_in,
+                           gene_col = "IRF2", 
+                           cell_types = cell_types,
+                           cohort_col = "StudyID", 
+                           cohort = datasets[2],
+                           split_pct = 50, 
+                           subgroup_col = NULL, 
+                           norm_type = "log2"
+                           )
+
+Fig4_C2_P50
+```
+
+Cohort NSCLC Pre-Tx 50% IRF2 - Plot immune cell fractions.
+```{r}
+df_in <- df_pre %>%
+  subset(StudyID == datasets[3] & BiopsyTime == "Pre")
+
+Fig4_NSCLC_P50 <- plot_cell_fraction_boxplot(df = df_in,
+                           gene_col = "IRF2", 
+                           cell_types = cell_types,
+                           cohort_col = "StudyID", 
+                           cohort = datasets[3],
+                           split_pct = 50, 
+                           subgroup_col = NULL, 
+                           norm_type = "log2"
+                           )
+
+Fig4_NSCLC_P50
+```
+
+```{r}
+Fig4 <- ggarrange(Fig4_C1_P50, 
+                  Fig4_C2_P50, 
+                  Fig4_NSCLC_P50,
+                  nrow = 3, ncol = 1, common.legend = TRUE)
+
+Fig4
+```
+
+```{r}
+# Perform correlation analysis
+df_corr_Cells_IRF2 <- compute_gene_cell_correlation(df = df_pre, 
+                                                    gene_col = "IRF2", 
+                                                    cell_types = cell_types, 
+                                                    cohort_col = "StudyID", 
+                                                    cohorts = datasets, 
+                                                    norm_type = "log2")
+
+# Build table output
+Table1 <- build_gene_cell_correlation_table(df_corr_Cells_IRF2, 
+                                            cell_types = cell_types)
+
+Table1
+```
+
+
+
+
+

@@ -1,0 +1,546 @@
+---
+title: "Figure 1C-D"
+output: html_notebook
+---
+
+Download libraries.
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(ComplexHeatmap)
+```
+
+Download RData from the folder.
+```{r}
+set.seed(123)
+
+# Load RData file containing data required for analysis and visualization.
+load("multiple_cohorts_data.RData")
+
+source("FunctionCollection.R")
+
+# Define a list of datasets (unique study ID)
+datasets <- c("PHS000452_GSE91061","PRJEB23709","SU2CMARK")
+
+# The clinical and gene expression data is stored as df_tf.
+df_tf <- df_tf %>%
+  distinct(SampleID, StudyID, .keep_all = TRUE)
+
+df_C1_pre <- df_tf %>% 
+  subset(StudyID == datasets[1] & BiopsyTime == "Pre") %>%
+  dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_C2_pre <- df_tf %>%
+  subset(StudyID == datasets[2] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+df_NSCLC_pre <- df_tf %>%
+  subset(StudyID == datasets[3] & BiopsyTime == "Pre") # %>%
+  # dedup_one_biopsy_per_patient(., prefer = "Pre")
+
+# Combine all pre-tx samples from three cohorts
+df_pre <- rbind(df_C1_pre, df_C2_pre, df_NSCLC_pre)
+
+```
+
+
+Correlation plot.
+```{r}
+# Specify MHCI pathway genes
+MHCI_genes <- c("B2M","ERAP1","ERAP2","HLA.A","HLA.B","HLA.C","NLRC5","PDIA3",
+                "PSMB10","PSMB8","PSMB9","PSME1","TAP1","TAP2","TAPBP","TAPBPL",
+                "CASP7","GSDMD",
+                "CALR","GAPDH")
+
+# Specify IRF genes
+IRF_genes <- c("IRF2")
+```
+
+
+Plot correlation heatmap.
+```{r}
+# Perform correlation analysis.
+# given ct = gene in the list,
+# the function calculate spearman correlation between IRF2 and ct.
+# outputs include rho and p-value.
+cor_by_dataset <- map_dfr(datasets, function(ds) {
+  sub_df <- filter(df_pre, StudyID == ds)
+  map_dfr(MHCI_genes, function(ct) {
+    if (sum(!is.na(sub_df[[ct]])) < 5) return(NULL)
+    test <- cor.test(sub_df[["IRF2"]], sub_df[[ct]],
+                     method = "spearman", exact = FALSE)
+    data.frame(
+      Dataset  = ds,
+      Gene = ct,
+      rho      = round(test$estimate, 3),
+      p_value  = signif(test$p.value, 3),
+      n        = nrow(sub_df),
+      stringsAsFactors = FALSE
+    )
+  })
+}) %>%
+  arrange(Dataset, p_value)
+
+# Replace NA rho and NA p-value with 0 and 1, respectively.
+cor_by_dataset <- cor_by_dataset %>%
+  mutate(across(rho, ~ replace_na(., 0)),
+         across(p_value, ~ replace_na(., 1)))
+
+# Extract rho value from the correlation table
+# This table will be used for heatmap
+mat_cor <- cor_by_dataset %>% 
+  subset(Dataset %in% datasets) %>%
+  dplyr::select(Dataset,Gene,rho) %>%
+  pivot_wider(.,
+               names_from = "Gene",
+               values_from = "rho") %>%
+  tibble::column_to_rownames(., var = "Dataset") %>%
+  dplyr::select(MHCI_genes)
+
+# Rename cohort names
+rownames(mat_cor) <- c("Cohort 1", "Cohort 2","Cohort NSCLC")
+  
+# Extract p-value from the correlation table
+# This table will be used for heatmap
+mat_pval <- cor_by_dataset %>%
+  subset(Dataset %in% datasets) %>%
+  dplyr::select(Dataset,Gene,p_value) %>%
+  pivot_wider(.,
+               names_from = "Gene",
+               values_from = "p_value") %>%
+  tibble::column_to_rownames(., var = "Dataset") %>%
+  dplyr::select(MHCI_genes)
+
+# Rename cohort names
+rownames(mat_pval) <- c("Cohort 1", "Cohort 2", "Cohort NSCLC")
+
+# 2. Define a color palette (e.g., 100 color steps)
+my_color <- circlize::colorRamp2(c(-1, 0, 1), c("blue", "white", "red"))
+
+# Make row order
+custom_rows <- c("Cohort 1", "Cohort 2", "Cohort NSCLC")
+# custom_rows <- c("1_PRCR","1_SDPD","2_PRCR","2_SDPD","3_PRCR","3_SDPD")
+# custom_rows <- c("IPI-NAIVE","PEM/NIVO-NAIVE","IPI-PROG","IL2/IPI-PROG")
+# custom_rows <- c("IPI-NAIVE_PRCR","IPI-NAIVE_SDPD","IPI-PROG_PRCR","IPI-PROG_SDPD")
+# custom_rows <- c("PEM/NIVO-NAIVE_PRCR","IPI-NAIVE_PRCR",
+#                  "PEM/NIVO-NAIVE_SDPD","IPI-NAIVE_SDPD",
+#                  "IPI-PROG_PRCR","IL2/IPI-PROG_PRCR",
+#                  "IPI-PROG_SDPD","IL2/IPI-PROG_SDPD")
+
+library(ComplexHeatmap)
+Fig1_Corplot_IRF2MHCGenes <- Heatmap(mat_cor,
+                           cluster_rows = FALSE,
+                           cluster_columns = FALSE,
+                           col = my_color,
+                           column_names_side = "top",
+                           row_names_side = "left",
+                           rect_gp = gpar(type = "none"),
+                           name = "Spearman\nCorrelation",
+                           # Custom row order
+                           row_order = custom_rows,
+                           # Custom cell rendering function
+                           cell_fun = function(j, i, x, y, width, height, fill) {
+                             
+                             if (mat_pval[i, j] > 0.05) {
+                               
+                               # NON-SIGNIFICANT: White background with a colored 'X'
+                               # 1. Draw a white background with a faint border so the grid stays intact
+                               grid.rect(x, y, width, height, gp = gpar(fill = "white", col = "black"))
+                               
+                               # 2. Draw the 'X' using the correlation color (the 'fill' variable)
+                               # We increase lwd (line width) to 2.5 so the color is easily visible
+                               grid.segments(x - width * 0.35, y - height * 0.35, 
+                                             x + width * 0.35, y + height * 0.35, 
+                                             gp = gpar(col = "black", lwd = 2.5)) # replace col = fill with col = "black"
+                               grid.segments(x - width * 0.35, y + height * 0.35,
+                                             x + width * 0.35, y - height * 0.35,
+                                             gp = gpar(col = "black", lwd = 2.5)) # replace col = fill with col = "black"
+                               
+                             } else {
+                               
+                               # SIGNIFICANT: Normal full-sized colored box
+                               # The cell is completely filled with the correlation color
+                               grid.rect(x, y, width, height, 
+                                         gp = gpar(fill = fill, col = "black", lwd = 1))
+                               
+                             }
+                           }
+)
+                       
+Fig1_Corplot_IRF2MHCGenes
+```
+
+Draw scatter plot showing correlation between IRF2 and selected gene.
+IRF2 vs. HLA-B in Cohort 1 (GSE91061_PHS000452).
+```{r}
+df_in <- df_pre %>% 
+  subset(StudyID == datasets[1]) %>%
+  dplyr::select(IRF2,HLA.B) %>%
+  `colnames<-`(., c("X","Y")) %>%
+  mutate(X = log2(X+1),
+         Y = log2(Y+1))
+
+# Draw correlation plot
+Fig_CorScatter_HLA.B_C1 <- ggscatter(df_in,
+          x = "X",
+          y = "Y",
+          color = "black",
+          size = 0.5,
+          add = "reg.line",
+          add.params = list(color = "blue",fill = "lightgray"),
+          conf.int = TRUE,
+          cor.coef = TRUE,
+          cor.coeff.args = list(method = "spearman",label.sep = "\n")) +
+  theme_bw() +
+  labs(x = "HLA-B",
+      y = "IRF2")
+
+Fig_CorScatter_HLA.B_C1
+```
+
+IRF2 vs. HLA-B in Cohort 2 (PRJEB23709).
+```{r}
+df_in <- df_pre %>% 
+  subset(StudyID == datasets[2]) %>%
+  dplyr::select(IRF2,HLA.B) %>%
+  `colnames<-`(., c("X","Y")) %>%
+  mutate(X = log2(X+1),
+         Y = log2(Y+1))
+
+# Draw correlation plot
+Fig_CorScatter_HLA.B_C2 <- ggscatter(df_in,
+          x = "X",
+          y = "Y",
+          color = "black",
+          size = 0.5,
+          add = "reg.line",
+          add.params = list(color = "blue",fill = "lightgray"),
+          conf.int = TRUE,
+          cor.coef = TRUE,
+          cor.coeff.args = list(method = "spearman",label.sep = "\n")) +
+  theme_bw() +
+  labs(x = "HLA-B",
+      y = "IRF2")
+
+Fig_CorScatter_HLA.B_C2
+```
+
+IRF2 vs. HLA-B in Cohort NSCLC.
+```{r}
+df_in <- df_pre %>% 
+  subset(StudyID == datasets[3]) %>%
+  dplyr::select(IRF2,HLA.B) %>%
+  `colnames<-`(., c("X","Y")) %>%
+  mutate(X = log2(X+1),
+         Y = log2(Y+1))
+
+# Draw correlation plot
+Fig_CorScatter_HLA.B_NSCLC <- ggscatter(df_in,
+          x = "X",
+          y = "Y",
+          color = "black",
+          size = 0.5,
+          add = "reg.line",
+          add.params = list(color = "blue",fill = "lightgray"),
+          conf.int = TRUE,
+          cor.coef = TRUE,
+          cor.coeff.args = list(method = "spearman",label.sep = "\n")) +
+  theme_bw() +
+  labs(x = "HLA-B",
+      y = "IRF2")
+
+Fig_CorScatter_HLA.B_NSCLC
+```
+
+IRF2 vs. B2M in Cohort 1 (GSE91061_PHS000452).
+```{r}
+df_in <- df_pre %>% 
+  subset(StudyID == datasets[1]) %>%
+  dplyr::select(IRF2,B2M) %>%
+  `colnames<-`(., c("X","Y")) %>%
+  mutate(X = log2(X+1),
+         Y = log2(Y+1))
+
+# Draw correlation plot
+Fig_CorScatter_B2M_C1 <- ggscatter(df_in,
+          x = "X",
+          y = "Y",
+          color = "black",
+          size = 0.5,
+          add = "reg.line",
+          add.params = list(color = "blue",fill = "lightgray"),
+          conf.int = TRUE,
+          cor.coef = TRUE,
+          cor.coeff.args = list(method = "spearman",label.sep = "\n")) +
+  theme_bw() +
+  labs(x = "B2M",
+      y = "IRF2")
+
+Fig_CorScatter_B2M_C1
+```
+
+IRF2 vs. B2M in Cohort 2 (PRJEB23709).
+```{r}
+df_in <- df_pre %>% 
+  subset(StudyID == datasets[2]) %>%
+  dplyr::select(IRF2,B2M) %>%
+  `colnames<-`(., c("X","Y")) %>%
+  mutate(X = log2(X+1),
+         Y = log2(Y+1))
+
+# Draw correlation plot
+Fig_CorScatter_B2M_C2 <- ggscatter(df_in,
+          x = "X",
+          y = "Y",
+          color = "black",
+          size = 0.5,
+          add = "reg.line",
+          add.params = list(color = "blue",fill = "lightgray"),
+          conf.int = TRUE,
+          cor.coef = TRUE,
+          cor.coeff.args = list(method = "spearman",label.sep = "\n")) +
+  theme_bw() +
+  labs(x = "B2M",
+      y = "IRF2")
+
+Fig_CorScatter_B2M_C2
+```
+
+IRF2 vs. B2M in Cohort NSCLC.
+```{r}
+df_in <- df_pre %>% 
+  subset(StudyID == datasets[3]) %>%
+  dplyr::select(IRF2,B2M) %>%
+  `colnames<-`(., c("X","Y")) %>%
+  mutate(X = log2(X+1),
+         Y = log2(Y+1))
+
+# Draw correlation plot
+Fig_CorScatter_B2M_NSCLC <- ggscatter(df_in,
+          x = "X",
+          y = "Y",
+          color = "black",
+          size = 0.5,
+          add = "reg.line",
+          add.params = list(color = "blue",fill = "lightgray"),
+          conf.int = TRUE,
+          cor.coef = TRUE,
+          cor.coeff.args = list(method = "spearman",label.sep = "\n")) +
+  theme_bw() +
+  labs(x = "B2M",
+      y = "IRF2")
+
+Fig_CorScatter_B2M_NSCLC
+```
+
+IRF2 vs. GAPDH in Cohort 1 (GSE91061_PHS000452).
+```{r}
+df_in <- df_pre %>% 
+  subset(StudyID == datasets[1]) %>%
+  dplyr::select(IRF2,GAPDH) %>%
+  `colnames<-`(., c("X","Y")) %>%
+  mutate(X = log2(X+1),
+         Y = log2(Y+1))
+
+# Draw correlation plot
+Fig_CorScatter_GAPDH_C1 <- ggscatter(df_in,
+          x = "X",
+          y = "Y",
+          color = "black",
+          size = 0.5,
+          add = "reg.line",
+          add.params = list(color = "blue",fill = "lightgray"),
+          conf.int = TRUE,
+          cor.coef = TRUE,
+          cor.coeff.args = list(method = "spearman",label.sep = "\n")) +
+  theme_bw() +
+  labs(x = "GAPDH",
+      y = "IRF2")
+
+Fig_CorScatter_GAPDH_C1
+```
+
+IRF2 vs. GAPDH in Cohort 2 (PRJEB23709).
+```{r}
+df_in <- df_pre %>% 
+  subset(StudyID == datasets[2]) %>%
+  dplyr::select(IRF2,GAPDH) %>%
+  `colnames<-`(., c("X","Y")) %>%
+  mutate(X = log2(X+1),
+         Y = log2(Y+1))
+
+# Draw correlation plot
+Fig_CorScatter_GAPDH_C2 <- ggscatter(df_in,
+          x = "X",
+          y = "Y",
+          color = "black",
+          size = 0.5,
+          add = "reg.line",
+          add.params = list(color = "blue",fill = "lightgray"),
+          conf.int = TRUE,
+          cor.coef = TRUE,
+          cor.coeff.args = list(method = "spearman",label.sep = "\n")) +
+  theme_bw() +
+  labs(x = "GAPDH",
+      y = "IRF2")
+
+Fig_CorScatter_GAPDH_C2
+```
+
+IRF2 vs. GAPDH in Cohort NSCLC.
+```{r}
+df_in <- df_pre %>% 
+  subset(StudyID == datasets[3]) %>%
+  dplyr::select(IRF2,GAPDH) %>%
+  `colnames<-`(., c("X","Y")) %>%
+  mutate(X = log2(X+1),
+         Y = log2(Y+1))
+
+# Draw correlation plot
+Fig_CorScatter_GAPDH_NSCLC <- ggscatter(df_in,
+          x = "X",
+          y = "Y",
+          color = "black",
+          size = 0.5,
+          add = "reg.line",
+          add.params = list(color = "blue",fill = "lightgray"),
+          conf.int = TRUE,
+          cor.coef = TRUE,
+          cor.coeff.args = list(method = "spearman",label.sep = "\n")) +
+  theme_bw() +
+  labs(x = "GAPDH",
+      y = "IRF2")
+
+Fig_CorScatter_GAPDH_NSCLC
+```
+
+IRF2 vs. ERAP1 in Cohort 1 (GSE91061_PHS000452).
+```{r}
+df_in <- df_pre %>% 
+  subset(StudyID == datasets[1]) %>%
+  dplyr::select(IRF2,ERAP1) %>%
+  `colnames<-`(., c("X","Y")) %>%
+  mutate(X = log2(X+1),
+         Y = log2(Y+1))
+
+# Draw correlation plot
+Fig_CorScatter_ERAP1_C1 <- ggscatter(df_in,
+          x = "X",
+          y = "Y",
+          color = "black",
+          size = 0.5,
+          add = "reg.line",
+          add.params = list(color = "blue",fill = "lightgray"),
+          conf.int = TRUE,
+          cor.coef = TRUE,
+          cor.coeff.args = list(method = "spearman",label.sep = "\n")) +
+  theme_bw() +
+  labs(x = "ERAP1",
+      y = "IRF2")
+
+Fig_CorScatter_ERAP1_C1
+```
+
+IRF2 vs. ERAP1 in Cohort 2 (PRJEB23709).
+```{r}
+df_in <- df_pre %>% 
+  subset(StudyID == datasets[2]) %>%
+  dplyr::select(IRF2,ERAP1) %>%
+  `colnames<-`(., c("X","Y")) %>%
+  mutate(X = log2(X+1),
+         Y = log2(Y+1))
+
+# Draw correlation plot
+Fig_CorScatter_ERAP1_C2 <- ggscatter(df_in,
+          x = "X",
+          y = "Y",
+          color = "black",
+          size = 0.5,
+          add = "reg.line",
+          add.params = list(color = "blue",fill = "lightgray"),
+          conf.int = TRUE,
+          cor.coef = TRUE,
+          cor.coeff.args = list(method = "spearman",label.sep = "\n")) +
+  theme_bw() +
+  labs(x = "ERAP1",
+      y = "IRF2")
+
+Fig_CorScatter_ERAP1_C2
+```
+
+IRF2 vs. ERAP1 in Cohort NSCLC.
+```{r}
+df_in <- df_pre %>% 
+  subset(StudyID == datasets[3]) %>%
+  dplyr::select(IRF2,ERAP1) %>%
+  `colnames<-`(., c("X","Y")) %>%
+  mutate(X = log2(X+1),
+         Y = log2(Y+1))
+
+# Draw correlation plot
+Fig_CorScatter_ERAP1_NSCLC <- ggscatter(df_in,
+          x = "X",
+          y = "Y",
+          color = "black",
+          size = 0.5,
+          add = "reg.line",
+          add.params = list(color = "blue",fill = "lightgray"),
+          conf.int = TRUE,
+          cor.coef = TRUE,
+          cor.coeff.args = list(method = "spearman",label.sep = "\n")) +
+  theme_bw() +
+  labs(x = "ERAP1",
+      y = "IRF2")
+
+Fig_CorScatter_ERAP1_NSCLC
+```
+
+Fig1 combine correlation scatter plots (v2).
+```{r}
+# Create top row, ERAP cohort 1,2,3
+Fig1_CorScatter_IRF2_top <- ggarrange(Fig_CorScatter_ERAP1_C1,
+                                       Fig_CorScatter_ERAP1_C2,
+                                       Fig_CorScatter_ERAP1_NSCLC,
+                                       nrow = 1, ncol = 3) 
+
+Fig1_CorScatter_IRF2_top <- annotate_figure(Fig1_CorScatter_IRF2_top,
+                                             left = text_grob("", face = "plain", size = 12))
+
+
+# Create bottom row, GAPDH cohort 1,2,3
+Fig1_CorScatter_IRF2_bottom <- ggarrange(Fig_CorScatter_GAPDH_C1,
+                                          Fig_CorScatter_GAPDH_C2,
+                                          Fig_CorScatter_GAPDH_NSCLC,
+                                          nrow = 1, ncol = 3) 
+
+Fig1_CorScatter_IRF2_bottom <- annotate_figure(Fig1_CorScatter_IRF2_bottom,
+                                              left = text_grob("", face = "plain", size = 12))
+
+
+
+Fig1_CorScatter_IRF2v2 <- ggarrange(Fig1_CorScatter_IRF2_top, 
+                                   Fig1B_CorScatter_IRF2_bottom,
+                                   nrow = 2, ncol = 1, align = "hv")
+
+Fig1_CorScatter_IRF2v2
+```
+
+Fig1 combined Fig1A and Fig1B(v2).
+```{r}
+# capture the rendered heatmap as a grob
+ht_grob <- grid.grabExpr(draw(Fig1_Corplot_IRF2MHCGenes))
+
+# convert grob -> ggplot object
+ht_gg <- as_ggplot(ht_grob)
+
+library(patchwork)
+# Make a white spacer and put it between the two plots
+my_white_spacer <- ggplot() + theme_void() #plot_spacer() + theme(plot.background = element_rect(fill = "white"))
+
+Fig1v2_pre <- ggarrange(ht_gg, my_white_spacer, Fig1_CorScatter_IRF2v2,
+                   nrow = 3, ncol = 1, align = "v",heights = c(1,0.25,3), labels = c("A","","B"))
+
+Fig1v2_pre
+```
+
+
