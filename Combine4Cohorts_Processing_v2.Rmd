@@ -1,0 +1,171 @@
+---
+title: "Combine 4 ICI cohorts -> multiple_cohorts_data.RData (v2)"
+output: html_notebook
+---
+
+Builds the `df_tf` table the Cohort Explorer app loads, in the same layout as
+the current `multiple_cohorts_data.RData` (checked against
+`Test_Table_Expr_Clinical.csv`): 10 clinical columns, linear TPM per gene,
+22 CIBERSORT fractions + 4 CIBERSORT stats, and five StudyIDs including the
+pooled `PHS000452_GSE91061` cohort. All logic lives in `ici_cohort_functions.R`;
+this notebook only sets paths/options and runs the steps (Knit / Run All).
+
+```{r setup}
+set.seed(2026)
+source("ici_cohort_functions.R")
+
+# ---- Paths ---------------------------------------------------------------
+base <- "~/IRF2_Project/"
+paths <- list(
+  PRJEB23709_expr = file.path(base, "PRJEB23709_ICI_Sydney/Table_ExprData_normalizedCounts.txt"),
+  PRJEB23709_clin = file.path(base, "PRJEB23709_ICI_Sydney/Table_ClinicalData.tsv"),
+  PHS000452_expr  = file.path(base, "PHS000452_ICI_DanaFaber/Table_ExprData.txt"),
+  PHS000452_clin  = file.path(base, "PHS000452_ICI_DanaFaber/Table_ClinicalData.xlsx"),
+  GSE91061_expr   = file.path(base, "GSE91061_ICI_Cleaveland/GSE91061_norm_counts_TPM_GRCh38.p13_NCBI.tsv"),
+  GSE91061_annot  = file.path(base, "GSE91061_ICI_Cleaveland/Human.GRCh38.p13.annot.tsv"),
+  GSE91061_clin   = file.path(base, "GSE91061_ICI_Cleaveland/Table_ClinicalData.xlsx"),
+  GSE91061_map    = file.path(base, "GSE91061_ICI_Cleaveland/mapping_table_patients.xlsx"),
+  # SU2C-MARK: GCT and processed clinical table (the xlsx Table S13 / Table S1 also work)
+  SU2CMARK_expr   = file.path(base, "SU2CMARK_cohort/SU2C-MARK_Harmonized_rnaseqc_tpm_v1.gct"),
+  SU2CMARK_clin   = file.path(base, "SU2CMARK_cohort/Processed_Table_ClinicalData_SUCMARK.csv"),
+  LM22            = "~/CIBERSORT/LM22.txt",
+  CIBERSORT_src   = "/CIBERSORT/CIBERSORT.R",
+  out_dir         = file.path(base, "FigureX_CombinedICI_Cohort"),
+  old_rdata       = "~/Melanoma_NSCLC_Survival_Explorer_latest/multiple_cohorts_data.RData"
+)
+inputs <- unlist(paths[!names(paths) %in% c("out_dir", "old_rdata")])
+stopifnot("missing input file(s)" = all(file.exists(inputs)))
+
+# ---- Options (decided once, saved in the RData) ----------------------------
+opts <- list(
+  # Defaults reproduce multiple_cohorts_data.RData; the alternative is noted on each line.
+  dup_fun         = "mean",          # duplicated symbols ("sum" keeps the TPM total)
+  phs_prior_def   = "ctla4_mapk",    # old table 121/121; "ctla4" = Liu et al. (7 MAPK-only patients -> Ipi_Naive)
+  prj_prior_label = "Tx_Naive",      # old table label for PRJEB23709
+  prj_include_edt = FALSE,           # TRUE adds the 18 on-treatment PRJEB23709 (EDT) samples as "On" rows
+  su2c_qc_keep    = FALSE,           # TRUE drops the 12 SU2C samples with RNA QC = "Flag"
+  pooled_method   = "combat_seq",    # old table; "combat" = ComBat on log2(TPM+1), "none" = no correction
+  combat_covars   = NULL,            # "combat" only
+  cibersort_input = "per_cohort_all",# old run: each cohort's own TPM, every RNA-seq sample (473);
+                                     # "combined_filtered" = pooled ComBat-seq + PRJEB23709 + SU2C-MARK,
+                                     # clinically filtered samples only (the design as described)
+  cibersort_qn    = TRUE,            # old run; FALSE is the usual choice for RNA-seq
+  cibersort_abs   = TRUE,            # old run; fractions are rescaled to 100 either way
+  cibersort_perm  = 100
+)
+```
+
+## 1. Annotation
+
+```{r annotation}
+coding_genes   <- get_protein_coding_genes()
+coding_symbols <- unique(coding_genes$SYMBOL)
+gene_lengths   <- get_gene_lengths_exon_union()     # PRJEB23709 CPM -> TPM only
+```
+
+## 2. Expression (genes x samples, linear TPM, protein-coding)
+
+```{r expression}
+expr <- list(
+  PRJEB23709 = load_expr_PRJEB23709(paths$PRJEB23709_expr, gene_lengths, coding_symbols, opts$dup_fun),
+  PHS000452  = load_expr_PHS000452(paths$PHS000452_expr, coding_symbols, dup_fun = opts$dup_fun),
+  GSE91061   = load_expr_GSE91061(paths$GSE91061_expr, paths$GSE91061_annot, opts$dup_fun),
+  SU2CMARK   = load_expr_SU2CMARK(paths$SU2CMARK_expr, coding_genes, opts$dup_fun)
+)
+do.call(rbind, Map(summarize_matrix, expr, names(expr)))
+```
+
+Check before going on: every row should say `Logged = FALSE`, and the medians
+should be in the same range (old table: 6-9; PRJEB23709 was 34 there).
+
+## 3. Clinical (one row per RNA-seq sample)
+
+```{r clinical}
+clin <- list(
+  PRJEB23709 = clin_PRJEB23709(paths$PRJEB23709_clin, prior_label = opts$prj_prior_label,
+                               expr_samples = colnames(expr$PRJEB23709),
+                               include_edt = opts$prj_include_edt),
+  PHS000452  = clin_PHS000452(paths$PHS000452_clin, prior_def = opts$phs_prior_def),
+  GSE91061   = clin_GSE91061(paths$GSE91061_clin, paths$GSE91061_map),
+  SU2CMARK   = clin_SU2CMARK(paths$SU2CMARK_clin, qc_keep_only = opts$su2c_qc_keep)
+)
+invisible(lapply(clin, validate_clinical))
+```
+
+## 4. Align samples (BiopsyMatch recomputed on matched samples)
+
+```{r align}
+expr_all <- expr                          # every RNA-seq sample, before clinical filtering
+aligned <- Map(align_cohort, expr[names(clin)], clin)
+expr <- lapply(aligned, `[[`, "expr")
+clin <- lapply(aligned, `[[`, "clin")
+```
+
+## 5. Pooled PHS000452 + GSE91061 cohort
+
+```{r pooled}
+pooled <- make_pooled_cohort(expr, clin, method = opts$pooled_method, covars = opts$combat_covars)
+pooled$diagnostics          # per-gene PHS000452 vs GSE91061 offset, log2 (old table: 0.64 -> 0.27)
+expr[[POOLED_ID]] <- pooled$expr
+clin[[POOLED_ID]] <- pooled$clin
+clinical_all <- dplyr::bind_rows(clin)
+cohort_summary(clinical_all)
+```
+
+## 6. CIBERSORT
+
+`per_cohort_all` (old run): mixture = each cohort's own uncorrected TPM for every
+RNA-seq sample (473 in 2026: incl. 18 PRJEB23709 EDT, 8 GSE91061 and 28 SU2C-MARK
+samples without clinical rows). Pooled rows then reuse their source sample's fractions.
+`combined_filtered`: mixture = the pooled ComBat-seq matrix + PRJEB23709 + SU2C-MARK,
+clinically filtered; PHS000452 / GSE91061 rows reuse their pooled copy's fractions.
+With QN = TRUE the choice changes every sample's result, because QN uses all columns.
+
+```{r cibersort}
+LM22 <- read.delim(paths$LM22, check.names = FALSE)
+mix_file <- file.path(paths$out_dir, "Mixture_ImmuneRegions.txt")
+sig_file <- file.path(paths$out_dir, "SigNature_LM22.txt")
+mix_expr <- switch(opts$cibersort_input,
+  per_cohort_all    = expr_all[c("PRJEB23709", "PHS000452", "GSE91061", "SU2CMARK")],
+  combined_filtered = expr[c(POOLED_ID, "PRJEB23709", "SU2CMARK")])
+lm22_genes <- write_cibersort_mixture(mix_expr, LM22[[1]], mix_file)
+LM22_sub <- LM22[LM22[[1]] %in% lm22_genes, ]; colnames(LM22_sub)[1] <- "Symbol"
+write.table(LM22_sub, sig_file, sep = "\t", quote = FALSE, row.names = FALSE)
+
+source(paths$CIBERSORT_src)
+owd <- setwd(paths$out_dir)
+res_cibersort <- CIBERSORT(sig_matrix = basename(sig_file), mixture_file = basename(mix_file),
+                           perm = opts$cibersort_perm, QN = opts$cibersort_qn, absolute = opts$cibersort_abs)
+setwd(owd)
+cibersort <- read_cibersort(res_cibersort)
+```
+
+## 7. App table, survival subset, checks
+
+```{r app_table}
+df_tf <- make_app_table(expr, clinical_all, cibersort)
+clinical_surv <- select_one_per_patient(clinical_all, prefer = "Pre")
+audit_wide_table(df_tf)
+```
+
+```{r compare_old}
+if (file.exists(paths$old_rdata)) {
+  old <- new.env(); load(paths$old_rdata, envir = old)
+  cmp <- compare_to_reference(df_tf, old$df_tf)
+  print(cmp$clinical)
+  print(cmp$expression)
+}
+```
+
+## 8. Save
+
+The app loads everything in its RData, so it gets only the tables it needs;
+the per-cohort matrices go to a separate file for notebooks.
+
+```{r save}
+save(df_tf, clinical_all, clinical_surv, opts,
+     file = file.path(paths$out_dir, "multiple_cohorts_data.RData"))
+save(expr, cibersort, pooled, opts,
+     file = file.path(paths$out_dir, "multiple_cohorts_matrices.RData"))
+sessionInfo()
+```
